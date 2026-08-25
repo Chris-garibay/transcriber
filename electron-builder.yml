@@ -4,6 +4,9 @@ directories:
   buildResources: build
   output: dist
 
+# Ad-hoc signs the macOS bundle; see the file for why this is necessary.
+afterPack: build/afterPack.cjs
+
 files:
   - '!**/.vscode/*'
   - '!src/*'
