@@ -22,7 +22,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = 'https://github.com/ggml-org/whisper.cpp'
 const TAG = process.env.WHISPER_VERSION ?? 'v1.7.6'
 
-const platformKey = `${process.platform}-${process.arch}`
+// TARGET_ARCH lets CI cross-build (an Apple Silicon runner producing the Intel
+// binary), since GitHub retired its Intel macOS runners.
+const targetArch = process.env.TARGET_ARCH ?? process.arch
+const platformKey = `${process.platform}-${targetArch}`
 const exeName = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli'
 const destDir = join(root, 'resources', 'bin', platformKey)
 const destExe = join(destDir, exeName)
@@ -69,19 +72,25 @@ async function buildFromSource() {
   console.log('Building (this takes a couple of minutes)…')
   // Static libraries plus an embedded Metal shader produce a single relocatable
   // executable, which is what makes the binary safe to copy into the app bundle.
-  await sh(
-    'cmake',
-    [
-      '-B', 'build',
-      '-DCMAKE_BUILD_TYPE=Release',
-      '-DBUILD_SHARED_LIBS=OFF',
-      '-DWHISPER_BUILD_EXAMPLES=ON',
-      '-DWHISPER_BUILD_TESTS=OFF',
-      '-DWHISPER_BUILD_SERVER=OFF',
-      '-DGGML_METAL_EMBED_LIBRARY=ON'
-    ],
-    { cwd: workDir }
-  )
+  const flags = [
+    '-B', 'build',
+    '-DCMAKE_BUILD_TYPE=Release',
+    '-DBUILD_SHARED_LIBS=OFF',
+    '-DWHISPER_BUILD_EXAMPLES=ON',
+    '-DWHISPER_BUILD_TESTS=OFF',
+    '-DWHISPER_BUILD_SERVER=OFF',
+    '-DGGML_METAL_EMBED_LIBRARY=ON'
+  ]
+
+  if (targetArch !== process.arch) {
+    // Cross-compiling: name the target explicitly and turn off -march=native,
+    // which would otherwise emit instructions for the build host.
+    flags.push(`-DCMAKE_OSX_ARCHITECTURES=${targetArch === 'x64' ? 'x86_64' : 'arm64'}`)
+    flags.push('-DGGML_NATIVE=OFF')
+    console.log(`Cross-compiling for ${targetArch} on ${process.arch}`)
+  }
+
+  await sh('cmake', flags, { cwd: workDir })
   await sh('cmake', ['--build', 'build', '--config', 'Release', '-j'], { cwd: workDir })
 
   // The CLI lands in build/bin; shared ggml libraries sit alongside it.
@@ -141,7 +150,7 @@ async function main() {
 
   if (process.platform === 'win32' && process.arch === 'x64') {
     await downloadPrebuilt('whisper-bin-x64.zip')
-  } else if (process.platform === 'darwin') {
+  } else if (process.platform === 'darwin' && (targetArch === 'arm64' || targetArch === 'x64')) {
     await buildFromSource()
   } else {
     throw new Error(`Unsupported platform: ${platformKey}. Only macOS and Windows are supported.`)
