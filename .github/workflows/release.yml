@@ -53,7 +53,12 @@ jobs:
         env:
           FIXTURES: test/fixtures
 
-      - name: Build and package
+      # electron-vite compiles main/preload/renderer into out/; electron-builder
+      # then packages that. Typecheck already ran above, so this skips it.
+      - name: Build
+        run: npx electron-vite build
+
+      - name: Package
         run: npx electron-builder ${{ matrix.args }} --publish never
 
       - uses: actions/upload-artifact@v4
