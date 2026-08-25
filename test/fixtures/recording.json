@@ -1,0 +1,171 @@
+{
+	"systeminfo": "WHISPER : COREML = 0 | OPENVINO = 0 | Metal : EMBED_LIBRARY = 1 | CPU : NEON = 1 | ARM_FMA = 1 | FP16_VA = 1 | MATMUL_INT8 = 1 | DOTPROD = 1 | ACCELERATE = 1 | REPACK = 1 | ",
+	"model": {
+		"type": "tiny",
+		"multilingual": false,
+		"vocab": 51864,
+		"audio": {
+			"ctx": 1500,
+			"state": 384,
+			"head": 6,
+			"layer": 4
+		},
+		"text": {
+			"ctx": 448,
+			"state": 384,
+			"head": 6,
+			"layer": 4
+		},
+		"mels": 80,
+		"ftype": 1
+	},
+	"params": {
+		"model": "tiny.en.bin",
+		"language": "en",
+		"translate": false
+	},
+	"result": {
+		"language": "en"
+	},
+	"transcription": [
+		{
+			"timestamps": {
+				"from": "00:00:00,000",
+				"to": "00:00:03,360"
+			},
+			"offsets": {
+				"from": 0,
+				"to": 3360
+			},
+			"text": " [MUSIC PLAYING]",
+			"tokens": [
+				{
+					"text": "[_BEG_]",
+					"timestamps": {
+						"from": "00:00:00,000",
+						"to": "00:00:00,000"
+					},
+					"offsets": {
+						"from": 0,
+						"to": 0
+					},
+					"id": 50363,
+					"p": 1,
+					"t_dtw": -1
+				},
+				{
+					"text": " [",
+					"timestamps": {
+						"from": "00:00:00,000",
+						"to": "00:00:00,240"
+					},
+					"offsets": {
+						"from": 0,
+						"to": 240
+					},
+					"id": 685,
+					"p": 0.946279,
+					"t_dtw": -1
+				},
+				{
+					"text": "M",
+					"timestamps": {
+						"from": "00:00:00,240",
+						"to": "00:00:00,470"
+					},
+					"offsets": {
+						"from": 240,
+						"to": 470
+					},
+					"id": 44,
+					"p": 0.706056,
+					"t_dtw": -1
+				},
+				{
+					"text": "US",
+					"timestamps": {
+						"from": "00:00:00,470",
+						"to": "00:00:00,930"
+					},
+					"offsets": {
+						"from": 470,
+						"to": 930
+					},
+					"id": 2937,
+					"p": 1,
+					"t_dtw": -1
+				},
+				{
+					"text": "IC",
+					"timestamps": {
+						"from": "00:00:00,950",
+						"to": "00:00:01,410"
+					},
+					"offsets": {
+						"from": 950,
+						"to": 1410
+					},
+					"id": 2149,
+					"p": 1,
+					"t_dtw": -1
+				},
+				{
+					"text": " PLAY",
+					"timestamps": {
+						"from": "00:00:01,410",
+						"to": "00:00:01,740"
+					},
+					"offsets": {
+						"from": 1410,
+						"to": 1740
+					},
+					"id": 28180,
+					"p": 0.970643,
+					"t_dtw": -1
+				},
+				{
+					"text": "ING",
+					"timestamps": {
+						"from": "00:00:01,760",
+						"to": "00:00:01,760"
+					},
+					"offsets": {
+						"from": 1760,
+						"to": 1760
+					},
+					"id": 2751,
+					"p": 1,
+					"t_dtw": -1
+				},
+				{
+					"text": "]",
+					"timestamps": {
+						"from": "00:00:01,760",
+						"to": "00:00:01,760"
+					},
+					"offsets": {
+						"from": 1760,
+						"to": 1760
+					},
+					"id": 60,
+					"p": 1,
+					"t_dtw": -1
+				},
+				{
+					"text": "[_TT_168]",
+					"timestamps": {
+						"from": "00:00:03,360",
+						"to": "00:00:03,360"
+					},
+					"offsets": {
+						"from": 3360,
+						"to": 3360
+					},
+					"id": 50531,
+					"p": 0.458622,
+					"t_dtw": -1
+				}
+			]
+		}
+	]
+}

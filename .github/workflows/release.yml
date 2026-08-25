@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each platform builds its own whisper.cpp binary natively, so the
+          # bundled engine always matches the architecture it ships to.
+          - os: macos-14
+            name: macOS (Apple Silicon)
+            args: --mac --arm64
+            artifact: dist/*.dmg
+          - os: macos-13
+            name: macOS (Intel)
+            args: --mac --x64
+            artifact: dist/*.dmg
+          - os: windows-latest
+            name: Windows (x64)
+            args: --win --x64
+            artifact: dist/*.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Fetch transcription engine
+        run: npm run fetch:whisper
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+        env:
+          FIXTURES: test/fixtures
+
+      - name: Build and package
+        run: npx electron-builder ${{ matrix.args }} --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

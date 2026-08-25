@@ -1,0 +1,41 @@
+appId: com.chrisgaribay.transcriber
+productName: Transcriber
+directories:
+  buildResources: build
+  output: dist
+
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!scripts/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!{.eslintrc,.prettierrc,README.md,ARCHITECTURE.md}'
+
+# The whisper binary must stay outside the asar so it can be executed directly.
+extraResources:
+  - from: resources/bin
+    to: bin
+    filter: ['**/*']
+
+asarUnpack:
+  - resources/**
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: Transcriber records audio from your microphone so it can be transcribed on this computer.
+
+win:
+  target:
+    - nsis
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

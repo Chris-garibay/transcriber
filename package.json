@@ -1,0 +1,37 @@
+{
+  "name": "transcriber",
+  "version": "0.1.0",
+  "description": "Local-first voice recorder and transcriber for use alongside AI coding tools",
+  "main": "./out/main/index.js",
+  "author": "Chris Garibay",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "build": "npm run typecheck && electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "fetch:whisper": "node scripts/fetch-whisper.mjs",
+    "package:mac": "npm run build && electron-builder --mac",
+    "package:win": "npm run build && electron-builder --win",
+    "test": "tsx --tsconfig tsconfig.node.json test/wav.test.mts && tsx --tsconfig tsconfig.node.json test/cleanup.test.mts && tsx --tsconfig tsconfig.node.json test/verify.test.mts"
+  },
+  "dependencies": {
+    "@electron-toolkit/preload": "^3.0.1",
+    "@electron-toolkit/utils": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "electron": "^31.2.0",
+    "electron-builder": "^24.13.3",
+    "electron-vite": "^2.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsx": "^4.23.12",
+    "typescript": "^5.5.3",
+    "vite": "^5.3.3"
+  }
+}
