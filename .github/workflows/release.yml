@@ -78,9 +78,11 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    # always(): a single platform failing should not withhold the builds that
-    # did succeed. The download step still fails loudly if nothing was produced.
-    if: always() && startsWith(github.ref, 'refs/tags/v')
+    # !cancelled() rather than always(): a platform failing should not withhold
+    # the builds that succeeded, but a run someone deliberately cancelled must
+    # not publish a partial release. The download step still fails loudly if
+    # nothing was produced.
+    if: '!cancelled() && startsWith(github.ref, ''refs/tags/v'')'
     steps:
       - uses: actions/download-artifact@v4
         with:
