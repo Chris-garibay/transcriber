@@ -106,9 +106,15 @@
     steps below are the standard way to open unsigned software.
   </div>
   <h3>macOS</h3>
-  <p>You will see &ldquo;Transcriber is damaged&rdquo; or &ldquo;cannot be opened&rdquo;.
-     Drag the app to Applications, then run:</p>
+  <p><strong>Clear the quarantine flag before you open it the first time.</strong> If you
+     launch it first, macOS may say the app is damaged and move it straight to the Trash.</p>
+  <ol>
+    <li>Open the .dmg and drag Transcriber to Applications.</li>
+    <li>Run this in Terminal:</li>
+  </ol>
   <pre><code>xattr -dr com.apple.quarantine /Applications/Transcriber.app</code></pre>
+  <p>Now open it normally. If macOS already moved it to the Trash, put it back, run the
+     command above, and try again.</p>
   <h3>Windows</h3>
   <p>SmartScreen shows a blue warning. Click <strong>More info</strong>, then
      <strong>Run anyway</strong>.</p>

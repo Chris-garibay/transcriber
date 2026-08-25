@@ -17,8 +17,16 @@ Grab a build from the [download page](https://chris-garibay.github.io/transcribe
 [releases](https://github.com/Chris-garibay/transcriber/releases/latest).
 
 Builds are **not code-signed**, since signing requires paid Apple and Microsoft developer
-accounts. On macOS run `xattr -dr com.apple.quarantine /Applications/Transcriber.app`
-after installing; on Windows choose *More info* then *Run anyway* at the SmartScreen prompt.
+accounts.
+
+On macOS, clear the quarantine flag *before* the first launch — otherwise macOS may
+decide the app is damaged and move it to the Trash:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Transcriber.app
+```
+
+On Windows, choose *More info* then *Run anyway* at the SmartScreen prompt.
 
 ## Building from source
 
