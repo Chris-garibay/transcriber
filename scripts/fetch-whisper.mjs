@@ -24,7 +24,14 @@ const TAG = process.env.WHISPER_VERSION ?? 'v1.7.6'
 
 // TARGET_ARCH lets CI cross-build (an Apple Silicon runner producing the Intel
 // binary), since GitHub retired its Intel macOS runners.
-const targetArch = process.env.TARGET_ARCH ?? process.arch
+// Use || rather than ??: a matrix key that is absent arrives as an empty
+// string, which ?? would happily accept and turn into a "darwin-" path.
+const targetArch = process.env.TARGET_ARCH || process.arch
+
+if (!['x64', 'arm64'].includes(targetArch)) {
+  console.error(`Unsupported TARGET_ARCH "${targetArch}". Expected x64 or arm64.`)
+  process.exit(1)
+}
 const platformKey = `${process.platform}-${targetArch}`
 const exeName = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli'
 const destDir = join(root, 'resources', 'bin', platformKey)
