@@ -1,28 +1,19 @@
-import { spawn } from 'child_process'
 import { promises as fs, existsSync } from 'fs'
 import { join, dirname } from 'path'
 import { cpus } from 'os'
 import { parseWhisperJson } from './parse'
 import type { WhisperSegment } from './parse'
 import { app } from 'electron'
+import { runWhisperCli, WhisperError } from './run-cli'
 
 export type { WhisperSegment }
+export { WhisperError }
 
 export interface WhisperResult {
   text: string
   segments: WhisperSegment[]
   /** Raw parsed JSON, persisted alongside the transcript for debugging. */
   raw: unknown
-}
-
-export class WhisperError extends Error {
-  constructor(
-    message: string,
-    readonly stderr: string = ''
-  ) {
-    super(message)
-    this.name = 'WhisperError'
-  }
 }
 
 /**
@@ -90,47 +81,12 @@ export async function transcribe(options: TranscribeOptions): Promise<WhisperRes
     '--threads', String(Math.max(2, Math.min(8, (cpus().length || 4) - 1)))
   ]
 
-  const stderr = await new Promise<string>((resolve, reject) => {
-    const child = spawn(bin, args, {
-      windowsHide: true,
-      cwd: dirname(audioPath)
-    })
-
-    let errOut = ''
-    let settled = false
-
-    const onAbort = (): void => {
-      if (!settled) child.kill('SIGKILL')
-    }
-    signal?.addEventListener('abort', onAbort, { once: true })
-
-    child.stderr.on('data', (buf: Buffer) => {
-      const text = buf.toString()
-      errOut += text
-      // Progress lines look like: "whisper_print_progress_callback: progress =  42%"
-      const match = /progress\s*=\s*(\d+)%/.exec(text)
-      if (match && onProgress) onProgress(Math.min(1, parseInt(match[1], 10) / 100))
-      if (errOut.length > 64_000) errOut = errOut.slice(-32_000)
-    })
-
-    child.on('error', (err) => {
-      settled = true
-      signal?.removeEventListener('abort', onAbort)
-      reject(new WhisperError(`Could not start the transcription engine: ${err.message}`))
-    })
-
-    child.on('close', (code, sig) => {
-      settled = true
-      signal?.removeEventListener('abort', onAbort)
-      if (signal?.aborted) return reject(new WhisperError('Transcription cancelled.', errOut))
-      if (code === 0) return resolve(errOut)
-      reject(
-        new WhisperError(
-          `Transcription engine exited with ${sig ? `signal ${sig}` : `code ${code}`}.`,
-          errOut
-        )
-      )
-    })
+  const stderr = await runWhisperCli({
+    bin,
+    args,
+    cwd: dirname(audioPath),
+    onProgress,
+    signal
   })
 
   let parsed: unknown

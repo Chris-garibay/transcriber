@@ -102,6 +102,11 @@ export interface TranscriptionUpdate {
   verification: VerificationResult
   audioDeleted: boolean
   error?: string | null
+  /**
+   * 0..1 while the engine is transcribing, null at every other point. Purely
+   * for display; it is never persisted, so it resets on restart.
+   */
+  progress?: number | null
 }
 
 export type ModelId = 'tiny' | 'base' | 'small' | 'medium'

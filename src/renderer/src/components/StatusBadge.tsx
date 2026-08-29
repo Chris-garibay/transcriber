@@ -11,9 +11,20 @@ const LABELS: Record<RecordingMeta['transcriptionStatus'], { text: string; cls: 
   failed: { text: 'Failed', cls: 'failed' }
 }
 
-export function StatusBadge({ status }: { status: RecordingMeta['transcriptionStatus'] }) {
+export function StatusBadge({
+  status,
+  progress
+}: {
+  status: RecordingMeta['transcriptionStatus']
+  /** 0..1 while transcribing; shown so a long recording does not look frozen. */
+  progress?: number | null
+}) {
   const { text, cls } = LABELS[status]
-  return <span className={`badge ${cls}`}>{text}</span>
+  const percent =
+    status === 'transcribing' && typeof progress === 'number'
+      ? ` ${Math.round(progress * 100)}%`
+      : ''
+  return <span className={`badge ${cls}`}>{text}{percent}</span>
 }
 
 /** Compact dot used in the sidebar where a full badge would be too noisy. */

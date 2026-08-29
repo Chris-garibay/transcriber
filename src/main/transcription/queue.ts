@@ -45,7 +45,26 @@ class TranscriptionQueue {
       status: meta.transcriptionStatus,
       verification: meta.verification,
       audioDeleted: meta.audioDeleted,
-      error: meta.error ?? null
+      error: meta.error ?? null,
+      progress: null
+    }
+    for (const listener of this.listeners) listener(update)
+  }
+
+  /**
+   * Progress is display-only, so it is pushed straight to the renderer without
+   * touching metadata.json -- a long recording reports progress dozens of
+   * times and none of it is worth a disk write.
+   */
+  private emitProgress(meta: RecordingMeta, fraction: number): void {
+    const update: TranscriptionUpdate = {
+      id: meta.id,
+      project: meta.project,
+      status: 'transcribing',
+      verification: meta.verification,
+      audioDeleted: meta.audioDeleted,
+      error: null,
+      progress: fraction
     }
     for (const listener of this.listeners) listener(update)
   }
@@ -126,10 +145,17 @@ class TranscriptionQueue {
     await this.setStatus(job, 'transcribing', { error: null })
 
     try {
+      let lastPercent = -1
       const result = await transcribe({
         audioPath,
         modelPath: modelFile,
-        signal: controller.signal
+        signal: controller.signal,
+        onProgress: (fraction) => {
+          const percent = Math.round(fraction * 100)
+          if (percent === lastPercent) return
+          lastPercent = percent
+          this.emitProgress(meta, percent / 100)
+        }
       })
 
       // Persist the transcript BEFORE verification, so a crash during

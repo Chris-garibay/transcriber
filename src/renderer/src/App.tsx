@@ -25,6 +25,8 @@ export default function App(): JSX.Element {
   const [recordings, setRecordings] = useState<RecordingMeta[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<RecordingDetail | null>(null)
+  // Transient transcription progress, keyed "project/id". Never persisted.
+  const [progress, setProgress] = useState<Record<string, number | null>>({})
 
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null)
   const [devices, setDevices] = useState<AudioDevice[]>([])
@@ -94,6 +96,11 @@ export default function App(): JSX.Element {
   useEffect(
     () =>
       window.api.transcription.onUpdate((update) => {
+        setProgress((current) => ({
+          ...current,
+          [`${update.project}/${update.id}`]: update.progress ?? null
+        }))
+
         setRecordings((current) =>
           current.map((rec) =>
             rec.id === update.id && rec.project === update.project
@@ -450,6 +457,7 @@ export default function App(): JSX.Element {
             <Detail
               detail={detail}
               meta={selectedRecording}
+              progress={progress[`${detail.project}/${detail.id}`] ?? null}
               draft={draft}
               dirty={dirty}
               onDraft={(text) => {
@@ -486,6 +494,7 @@ export default function App(): JSX.Element {
 function Detail({
   detail,
   meta,
+  progress,
   draft,
   dirty,
   onDraft,
@@ -497,6 +506,7 @@ function Detail({
 }: {
   detail: RecordingDetail
   meta: RecordingMeta | null
+  progress: number | null
   draft: string
   dirty: boolean
   onDraft: (text: string) => void
@@ -526,7 +536,7 @@ function Detail({
     <>
       <div className="detail-head">
         <h2>{detail.title}</h2>
-        <StatusBadge status={status} />
+        <StatusBadge status={status} progress={progress} />
       </div>
       <div className="detail-meta">
         {formatDate(detail.createdAt)} · {formatDuration(detail.duration)}
@@ -569,7 +579,10 @@ function Detail({
       {working && (
         <div className="notice info">
           {status === 'queued' && 'Waiting for a transcription slot…'}
-          {status === 'transcribing' && 'Transcribing locally on this computer…'}
+          {status === 'transcribing' &&
+            (typeof progress === 'number'
+              ? `Transcribing locally on this computer — ${Math.round(progress * 100)}% of ${formatDuration(detail.duration)}…`
+              : 'Transcribing locally on this computer…')}
           {status === 'verifying' && 'Verifying the transcript…'}
           {status === 'recording' && 'Recording in progress.'}
           {status === 'saving' && 'Saving audio…'}
