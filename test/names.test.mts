@@ -4,6 +4,7 @@
  * escaping the data root -- or from hiding inside it.
  */
 import assert from 'assert'
+import { join, sep } from 'path'
 import { safeName, isInside } from '../src/main/storage/names.ts'
 
 let failures = 0
@@ -77,10 +78,13 @@ test('a name capped mid-space does not keep a trailing space', () => {
 console.log('\ncontainment')
 
 test('isInside accepts a real child and rejects a sibling', () => {
-  assert.strictEqual(isInside('/a/b', '/a/b/c'), true)
-  assert.strictEqual(isInside('/a/b', '/a/bc'), false)
-  assert.strictEqual(isInside('/a/b', '/a'), false)
-  assert.strictEqual(isInside('/a/b', '/a/b'), false)
+  // isInside compares with path.sep, so the fixtures have to be built with it
+  // too or this passes on macOS and fails on Windows.
+  const parent = join(sep, 'a', 'b')
+  assert.strictEqual(isInside(parent, join(parent, 'c')), true)
+  assert.strictEqual(isInside(parent, parent + 'c'), false)
+  assert.strictEqual(isInside(parent, join(sep, 'a')), false)
+  assert.strictEqual(isInside(parent, parent), false)
 })
 
 console.log(failures === 0 ? '\nall passed\n' : `\n${failures} failed\n`)
