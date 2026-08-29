@@ -102,7 +102,12 @@ export async function renameRecording(
 
   // Only the display title changes; the directory name stays stable so any
   // path already copied into a coding agent keeps resolving.
-  const next: RecordingMeta = { ...meta, title: safeName(title) || meta.id }
+  //
+  // safeName never returns an empty string -- it falls back to "Untitled" --
+  // so a blank title has to be caught before it, or the recording silently
+  // loses its name.
+  const trimmed = title.trim()
+  const next: RecordingMeta = { ...meta, title: trimmed ? safeName(trimmed) : meta.id }
   await writeMeta(dir, next)
   return next
 }

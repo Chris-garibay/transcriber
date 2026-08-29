@@ -79,6 +79,23 @@ class TranscriptionQueue {
     void this.drain()
   }
 
+  /**
+   * True when a recording -- or, with no id, any recording in the project -- is
+   * queued or being transcribed right now.
+   *
+   * Callers use this to refuse edits that would move or remove a directory the
+   * queue is actively writing into. Renaming a project mid-transcription used
+   * to strand the recording in 'transcribing' until the next launch, because
+   * the job holds the project name as a plain string and its status write
+   * landed at the old path.
+   */
+  isBusy(project: string, id?: string): boolean {
+    const match = (job: Job): boolean =>
+      job.project === project && (id === undefined || job.id === id)
+    if (this.current && match(this.current.job)) return true
+    return this.pending.some(match)
+  }
+
   /** Cancel an in-flight job; the audio is untouched and the job re-queues. */
   cancelCurrent(): void {
     this.current?.controller.abort()

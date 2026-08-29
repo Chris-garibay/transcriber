@@ -10,6 +10,7 @@ import { startCapture, listInputDevices, MicrophoneError } from './audio/recorde
 import type { AudioDevice, CaptureHandle } from './audio/recorder'
 import { StatusBadge, StatusDot } from './components/StatusBadge'
 import { ModelGate } from './components/ModelGate'
+import { usePrompt } from './components/PromptDialog'
 import { formatDate, formatDuration } from './components/format'
 
 const ACTIVE_STATES: RecordingMeta['transcriptionStatus'][] = [
@@ -51,6 +52,24 @@ export default function App(): JSX.Element {
     setToast(message)
     window.setTimeout(() => setToast(''), 2200)
   }, [])
+
+  const { ask, dialog: promptDialog } = usePrompt()
+
+  /**
+   * Run an action that talks to the main process and surface any failure.
+   * These used to be bare `void api.x()` calls, so a rejected handler became an
+   * unhandled rejection and the user saw nothing at all.
+   */
+  const attempt = useCallback(
+    async (action: () => Promise<unknown>, fallback: string): Promise<void> => {
+      try {
+        await action()
+      } catch (err) {
+        notify(err instanceof Error ? err.message : fallback)
+      }
+    },
+    [notify]
+  )
 
   // ── Loading ──────────────────────────────────────────────────────────────
   const loadProjects = useCallback(async () => {
@@ -224,7 +243,7 @@ export default function App(): JSX.Element {
 
   // ── Actions ──────────────────────────────────────────────────────────────
   async function createProject(): Promise<void> {
-    const name = window.prompt('Project name')
+    const name = await ask({ message: 'Project name', confirmLabel: 'Create' })
     if (!name?.trim()) return
     try {
       const created = await window.api.projects.create(name)
@@ -236,7 +255,7 @@ export default function App(): JSX.Element {
   }
 
   async function renameProjectAction(name: string): Promise<void> {
-    const next = window.prompt('Rename project', name)
+    const next = await ask({ message: 'Rename project', initial: name, confirmLabel: 'Rename' })
     if (!next?.trim() || next === name) return
     try {
       const renamed = await window.api.projects.rename(name, next)
@@ -262,11 +281,15 @@ export default function App(): JSX.Element {
 
   async function renameRecordingAction(): Promise<void> {
     if (!detail || !activeProject) return
-    const next = window.prompt('Rename recording', detail.title)
+    const next = await ask({
+      message: 'Rename recording',
+      initial: detail.title,
+      confirmLabel: 'Rename'
+    })
     if (!next?.trim()) return
-    await window.api.recordings.rename(activeProject, detail.id, next)
+    const renamed = await window.api.recordings.rename(activeProject, detail.id, next)
     await loadRecordings(activeProject)
-    setDetail({ ...detail, title: next })
+    setDetail({ ...detail, title: renamed?.title ?? next })
   }
 
   async function deleteRecordingAction(): Promise<void> {
@@ -289,8 +312,12 @@ export default function App(): JSX.Element {
   }
 
   async function copy(text: string, label: string): Promise<void> {
-    await navigator.clipboard.writeText(text)
-    notify(label)
+    try {
+      await navigator.clipboard.writeText(text)
+      notify(label)
+    } catch {
+      notify('Could not write to the clipboard.')
+    }
   }
 
   const selectedRecording = useMemo(
@@ -379,7 +406,14 @@ export default function App(): JSX.Element {
 
         <div className="sidebar-foot">
           <button onClick={() => void createProject()}>+ Project</button>
-          <button onClick={() => void window.api.shell.openProjectDir(activeProject)}>
+          <button
+            onClick={() =>
+              void attempt(
+                () => window.api.shell.openProjectDir(activeProject),
+                'Could not open the folder.'
+              )
+            }
+          >
             Open folder
           </button>
         </div>
@@ -470,9 +504,23 @@ export default function App(): JSX.Element {
               onDelete={deleteRecordingAction}
               onRetry={async () => {
                 if (!activeProject) return
-                await window.api.transcription.retry(activeProject, detail.id)
-                notify('Re-queued for transcription')
+                await attempt(async () => {
+                  await window.api.transcription.retry(activeProject, detail.id)
+                  notify('Re-queued for transcription')
+                }, 'Could not re-queue this recording.')
               }}
+              onReveal={() =>
+                attempt(
+                  () => window.api.shell.reveal(detail.project, detail.id),
+                  'Could not reveal this recording.'
+                )
+              }
+              onOpenInEditor={() =>
+                attempt(
+                  () => window.api.shell.openTranscript(detail.project, detail.id),
+                  'Could not open the transcript.'
+                )
+              }
             />
           ) : (
             <div className="empty">
@@ -484,6 +532,7 @@ export default function App(): JSX.Element {
         </div>
       </main>
 
+      {promptDialog}
       {toast && <div className="toast">{toast}</div>}
     </div>
   )
@@ -502,7 +551,9 @@ function Detail({
   onCopy,
   onRename,
   onDelete,
-  onRetry
+  onRetry,
+  onReveal,
+  onOpenInEditor
 }: {
   detail: RecordingDetail
   meta: RecordingMeta | null
@@ -515,6 +566,8 @@ function Detail({
   onRename: () => Promise<void>
   onDelete: () => Promise<void>
   onRetry: () => Promise<void>
+  onReveal: () => Promise<void>
+  onOpenInEditor: () => Promise<void>
 }): JSX.Element {
   const status = meta?.transcriptionStatus ?? detail.transcriptionStatus
   const verification = meta?.verification ?? detail.verification
@@ -610,13 +663,10 @@ function Detail({
         >
           Copy path
         </button>
-        <button onClick={() => void window.api.shell.reveal(detail.project, detail.id)}>
+        <button onClick={() => void onReveal()}>
           Reveal in {navigator.userAgent.includes('Mac') ? 'Finder' : 'Explorer'}
         </button>
-        <button
-          disabled={!detail.transcriptFile}
-          onClick={() => void window.api.shell.openTranscript(detail.project, detail.id)}
-        >
+        <button disabled={!detail.transcriptFile} onClick={() => void onOpenInEditor()}>
           Open in editor
         </button>
         <button onClick={() => void onRename()}>Rename</button>

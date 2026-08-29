@@ -58,10 +58,21 @@ export function registerIpc(): void {
   // ── Projects ───────────────────────────────────────────────────────────────
   handle<[], Project[]>(IPC.projectsList, () => listProjects())
   handle<[string], string>(IPC.projectsCreate, (name) => createProject(name))
-  handle<[string, string], string>(IPC.projectsRename, (from, to) => renameProject(from, to))
+  handle<[string, string], string>(IPC.projectsRename, (from, to) => {
+    if (recorder.state.project === from) {
+      throw new Error('Stop the current recording before renaming this project.')
+    }
+    if (queue.isBusy(from)) {
+      throw new Error('Wait for transcription to finish before renaming this project.')
+    }
+    return renameProject(from, to)
+  })
   handle<[string], void>(IPC.projectsDelete, async (name) => {
     if (recorder.state.project === name) {
       throw new Error('Stop the current recording before deleting this project.')
+    }
+    if (queue.isBusy(name)) {
+      throw new Error('Wait for transcription to finish before deleting this project.')
     }
     await deleteProject(name)
   })
@@ -77,6 +88,9 @@ export function registerIpc(): void {
   handle<[string, string], void>(IPC.recordingsDelete, async (project, id) => {
     if (recorder.state.id === id) {
       throw new Error('Stop the current recording before deleting it.')
+    }
+    if (queue.isBusy(project, id)) {
+      throw new Error('Wait for transcription to finish before deleting this recording.')
     }
     await deleteRecording(project, id)
   })
