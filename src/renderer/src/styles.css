@@ -195,6 +195,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .notice li { margin-bottom: 3px; }
 .notice .row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
 
+/* Drop target for importing an existing audio or video file. */
+.main-body.dropping {
+  outline: 2px dashed var(--accent);
+  outline-offset: -10px;
+  background: #141a2b;
+}
+
 .empty {
   color: var(--text-faint);
   text-align: center;

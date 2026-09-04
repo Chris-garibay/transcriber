@@ -9,7 +9,7 @@ import { transcribe, WhisperError } from './whisper'
 import { activeModelPath, getModelStatus } from './model'
 import { verifyTranscript, failedVerification } from '../verification/verify'
 import { repairWav } from '../audio/wav-writer'
-import { deleteAudioIfVerified, reconcile } from '../cleanup/audio-cleanup'
+import { deleteAudioIfVerified, deleteAudioOnAcceptance, reconcile } from '../cleanup/audio-cleanup'
 
 type Listener = (update: TranscriptionUpdate) => void
 
@@ -94,6 +94,66 @@ class TranscriptionQueue {
       job.project === project && (id === undefined || job.id === id)
     if (this.current && match(this.current.job)) return true
     return this.pending.some(match)
+  }
+
+  /**
+   * Accept a transcript the checker flagged, on the user's explicit instruction,
+   * and release the hold the issues placed on the audio.
+   *
+   * The issues are kept rather than erased -- they are the factual record of
+   * what the checker found -- and the status becomes 'accepted' rather than
+   * 'passed', so an accepted transcript stays distinguishable from one that
+   * verified cleanly and the automatic deletion path keeps refusing it.
+   */
+  async accept(project: string, id: string): Promise<RecordingMeta | null> {
+    if (this.isBusy(project, id)) {
+      throw new Error('Wait for transcription to finish before accepting this transcript.')
+    }
+
+    const dir = recordingDir(project, id)
+    const meta = await readMeta(dir)
+    if (!meta) return null
+
+    if (meta.transcriptionStatus !== 'needs_review') {
+      throw new Error('Only a recording that needs review can be accepted.')
+    }
+
+    // Refused outright rather than half-applied. Cleanup would decline to touch
+    // the audio anyway, leaving a recording marked complete with its audio still
+    // held -- so the honest answer is to not accept it at all.
+    let transcriptBytes = 0
+    try {
+      transcriptBytes = (await fs.stat(join(dir, TRANSCRIPT_FILE))).size
+    } catch {
+      transcriptBytes = 0
+    }
+    if (transcriptBytes === 0) {
+      throw new Error(
+        'There is no transcript to keep, so the audio cannot be released. Retranscribe this recording instead.'
+      )
+    }
+
+    // Committed to disk before the unlink, because cleanup re-reads the
+    // acceptance from there rather than trusting this call.
+    const accepted = await this.setStatus({ project, id }, 'complete', {
+      error: null,
+      verification: {
+        ...meta.verification,
+        status: 'accepted',
+        acceptedAt: new Date().toISOString()
+      }
+    })
+    if (!accepted) return null
+
+    const outcome = await deleteAudioOnAcceptance(dir)
+    if (outcome.deleted) {
+      const after = await reconcile(dir)
+      if (after) {
+        this.emit(after)
+        return after
+      }
+    }
+    return accepted
   }
 
   /** Cancel an in-flight job; the audio is untouched and the job re-queues. */
@@ -235,6 +295,19 @@ class TranscriptionQueue {
       for (const meta of metas) {
         const dir = recordingDir(project.name, meta.id)
         const repaired = (await reconcile(dir)) ?? meta
+
+        // An import interrupted mid-write holds only the part of the file that
+        // had been decoded and streamed. Its header matches that truncated
+        // payload, so every downstream check would pass and the user would get
+        // a clean transcript of the first few minutes with nothing to indicate
+        // the rest was missing. Fail it instead -- the source file is untouched,
+        // so importing again costs nothing.
+        if (repaired.source === 'import' && repaired.transcriptionStatus === 'saving') {
+          await this.setStatus({ project: project.name, id: meta.id }, 'failed', {
+            error: `Importing "${repaired.sourceFile ?? 'this file'}" was interrupted, so only part of the audio was saved. Import the file again.`
+          })
+          continue
+        }
 
         // 'recording' means the app died mid-capture: the WAV is whatever was
         // flushed, which is still worth transcribing.

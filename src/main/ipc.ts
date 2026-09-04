@@ -12,7 +12,7 @@ import type {
   ModelStatus
 } from '@shared/types'
 import { rootDir, projectDir, recordingDir } from './storage/paths'
-import { TRANSCRIPT_FILE } from './storage/metadata'
+import { TRANSCRIPT_FILE, readMeta } from './storage/metadata'
 import {
   createProject,
   deleteProject,
@@ -29,6 +29,7 @@ import {
   searchRecordings
 } from './storage/recordings'
 import { recorder } from './recorder/session'
+import { importer } from './recorder/import'
 import { queue } from './transcription/queue'
 import { getModelStatus, downloadModel, selectModel } from './transcription/model'
 
@@ -62,6 +63,9 @@ export function registerIpc(): void {
     if (recorder.state.project === from) {
       throw new Error('Stop the current recording before renaming this project.')
     }
+    if (importer.isBusy(from)) {
+      throw new Error('Wait for the file import to finish before renaming this project.')
+    }
     if (queue.isBusy(from)) {
       throw new Error('Wait for transcription to finish before renaming this project.')
     }
@@ -70,6 +74,9 @@ export function registerIpc(): void {
   handle<[string], void>(IPC.projectsDelete, async (name) => {
     if (recorder.state.project === name) {
       throw new Error('Stop the current recording before deleting this project.')
+    }
+    if (importer.isBusy(name)) {
+      throw new Error('Wait for the file import to finish before deleting this project.')
     }
     if (queue.isBusy(name)) {
       throw new Error('Wait for transcription to finish before deleting this project.')
@@ -88,6 +95,9 @@ export function registerIpc(): void {
   handle<[string, string], void>(IPC.recordingsDelete, async (project, id) => {
     if (recorder.state.id === id) {
       throw new Error('Stop the current recording before deleting it.')
+    }
+    if (importer.isBusy(project, id)) {
+      throw new Error('Wait for the file import to finish before deleting this recording.')
     }
     if (queue.isBusy(project, id)) {
       throw new Error('Wait for transcription to finish before deleting this recording.')
@@ -135,10 +145,40 @@ export function registerIpc(): void {
     broadcast(IPC.recordState, recorder.state)
   })
 
+  // ── File import ────────────────────────────────────────────────────────────
+  // The renderer decodes the file and streams the same 16 kHz mono PCM the
+  // microphone path produces. Only the file's base name crosses the bridge, so
+  // the main process never learns where the user's original file lives.
+  handle<[string, string], RecordingMeta>(IPC.importBegin, (project, fileName) =>
+    importer.begin({ project, projectDir: projectDir(project), fileName })
+  )
+
+  // Awaited, unlike the microphone stream: an import has no realtime deadline,
+  // and the round trip paces the renderer so it cannot outrun the disk.
+  handle<[ArrayBuffer], void>(IPC.importPcm, (chunk) => importer.write(Buffer.from(chunk)))
+
+  handle<[], RecordingMeta>(IPC.importFinish, async () => {
+    const meta = await importer.finish()
+    queue.enqueue(meta.project, meta.id)
+    return meta
+  })
+
+  handle<[], void>(IPC.importCancel, () => importer.cancel())
+
   // ── Transcription ──────────────────────────────────────────────────────────
-  handle<[string, string], void>(IPC.transcriptionRetry, (project, id) => {
+  handle<[string, string], void>(IPC.transcriptionRetry, async (project, id) => {
+    // Without the audio a re-run can only fail, and failing would move a
+    // settled recording out of 'complete' for no gain.
+    const meta = await readMeta(recordingDir(project, id))
+    if (meta?.audioDeleted) {
+      throw new Error('The audio for this recording has been removed, so it cannot be transcribed again.')
+    }
     queue.enqueue(project, id)
   })
+
+  handle<[string, string], RecordingMeta | null>(IPC.transcriptionAccept, (project, id) =>
+    queue.accept(project, id)
+  )
 
   // ── Models ─────────────────────────────────────────────────────────────────
   handle<[], ModelStatus>(IPC.modelStatus, () => getModelStatus())

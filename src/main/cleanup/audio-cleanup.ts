@@ -9,22 +9,26 @@ export interface CleanupOutcome {
 }
 
 /**
- * The ONLY place in the application that removes a recording's audio.
+ * The ONLY module in the application that removes a recording's audio.
  *
- * Every precondition is re-read from disk immediately before the unlink rather
- * than trusted from an in-memory object, so a stale caller cannot talk this
- * function into deleting something. Deletion is never reachable from an error
- * path: callers invoke it only after verification returns cleanly, and it
- * independently re-checks that result anyway.
+ * There are two ways in -- verification passing cleanly, and the user
+ * explicitly accepting a transcript the checker flagged -- and they share
+ * everything that makes deletion safe: preconditions re-read from disk
+ * immediately before the unlink rather than trusted from an in-memory object,
+ * one crash-safe write ordering, and one absolute requirement that a non-empty
+ * transcript already exist on disk.
  *
  * Crash safety comes from the write ordering:
- *   1. persist the passing verification result and audioDeleted:false, fsynced
+ *   1. persist the deciding metadata and audioDeleted:false, fsynced
  *   2. unlink the audio
  *   3. persist audioDeleted:true
  * A crash before (2) leaves audio present and metadata honest. A crash between
  * (2) and (3) leaves metadata claiming audio exists when it does not, which
  * `reconcile()` corrects on next launch. At no point can metadata claim a
  * transcript is verified while the audio is gone and the transcript is not.
+ *
+ * Deletion is never reachable from an error path: callers invoke it only after
+ * verification returns cleanly, and it independently re-checks that result.
  */
 export async function deleteAudioIfVerified(dir: string): Promise<CleanupOutcome> {
   const meta = await readMeta(dir)
@@ -43,9 +47,74 @@ export async function deleteAudioIfVerified(dir: string): Promise<CleanupOutcome
     return { deleted: false, reason: `Recording is in state "${meta.transcriptionStatus}".` }
   }
 
-  // Precondition 2: the transcript exists on disk and has real content.
-  // This is checked against the filesystem, not against metadata, because
-  // metadata is what we are trying to corroborate.
+  return unlinkAudio(dir, meta, {
+    reason: 'Verified with zero issues.',
+    // The raw engine output only exists to explain a verification result. With
+    // zero issues there is nothing to explain, so the recording settles to just
+    // the transcript and its metadata.
+    dropRawResult: true
+  })
+}
+
+/**
+ * Remove the audio for a recording whose issues the user has explicitly
+ * accepted.
+ *
+ * Retranscribing does not always clear a verification issue. A genuine long
+ * pause, a noisy room, or a speaker the model renders with low confidence will
+ * flag on every pass, and with no way out the audio is held forever and the
+ * warning never clears. This is that way out.
+ *
+ * Acceptance waives exactly one precondition -- that the verification report be
+ * clean -- and nothing else. It specifically cannot waive the requirement that
+ * a non-empty transcript already exist on disk: once the audio is gone the
+ * transcript is all that is left, so deleting audio to keep nothing would be
+ * precisely the loss this module exists to prevent.
+ *
+ * The acceptance is not taken from the caller either. It is read back from
+ * disk, so a stale or mistaken in-memory object cannot authorise a deletion.
+ */
+export async function deleteAudioOnAcceptance(dir: string): Promise<CleanupOutcome> {
+  const meta = await readMeta(dir)
+
+  if (!meta) return { deleted: false, reason: 'Metadata could not be read.' }
+  if (meta.audioDeleted) return { deleted: false, reason: 'Audio was already removed.' }
+
+  if (meta.verification.status !== 'accepted') {
+    return {
+      deleted: false,
+      reason: `Verification status is "${meta.verification.status}", which is not an acceptance.`
+    }
+  }
+  if (meta.transcriptionStatus !== 'complete') {
+    return { deleted: false, reason: `Recording is in state "${meta.transcriptionStatus}".` }
+  }
+
+  return unlinkAudio(dir, meta, {
+    reason: 'Issues accepted by the user.',
+    // The issues stay on record, so the engine output explaining them is kept.
+    dropRawResult: false
+  })
+}
+
+interface UnlinkOptions {
+  reason: string
+  dropRawResult: boolean
+}
+
+/**
+ * The transcript precondition and the three-step unlink, shared by both entry
+ * points so they cannot drift apart. The caller has already established *why*
+ * deletion is permitted; this establishes that it is safe.
+ */
+async function unlinkAudio(
+  dir: string,
+  meta: RecordingMeta,
+  options: UnlinkOptions
+): Promise<CleanupOutcome> {
+  // The transcript must exist on disk and have real content. This is checked
+  // against the filesystem, not against metadata, because metadata is what we
+  // are trying to corroborate.
   const transcriptPath = join(dir, TRANSCRIPT_FILE)
   let transcriptBytes = 0
   try {
@@ -75,12 +144,9 @@ export async function deleteAudioIfVerified(dir: string): Promise<CleanupOutcome
   // Step 3: record that it is gone.
   await writeMeta(dir, { ...meta, audioDeleted: true, audioFile: null })
 
-  // The raw engine output only exists to explain a verification result. With
-  // zero issues there is nothing to explain, so the recording settles to just
-  // the transcript and its metadata. It is kept whenever review is needed.
-  await fs.rm(join(dir, RAW_RESULT_FILE), { force: true })
+  if (options.dropRawResult) await fs.rm(join(dir, RAW_RESULT_FILE), { force: true })
 
-  return { deleted: true, reason: 'Verified with zero issues.' }
+  return { deleted: true, reason: options.reason }
 }
 
 /**

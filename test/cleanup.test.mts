@@ -7,7 +7,11 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import assert from 'assert'
 import type { RecordingMeta, VerificationIssue } from '../src/shared/types.ts'
-import { deleteAudioIfVerified, reconcile } from '../src/main/cleanup/audio-cleanup.ts'
+import {
+  deleteAudioIfVerified,
+  deleteAudioOnAcceptance,
+  reconcile
+} from '../src/main/cleanup/audio-cleanup.ts'
 
 let failures = 0
 async function test(name: string, fn: () => Promise<void>): Promise<void> {
@@ -54,7 +58,12 @@ async function makeRecording(options: Fixture = {}): Promise<string> {
     audioFile: audio ? 'recording.wav' : null,
     transcriptFile: transcript !== null ? 'transcript.txt' : null,
     transcriptionStatus: status,
-    verification: { status: verification, issues, checkedAt: new Date().toISOString() },
+    verification: {
+      status: verification,
+      issues,
+      checkedAt: new Date().toISOString(),
+      acceptedAt: verification === 'accepted' ? new Date().toISOString() : null
+    },
     audioDeleted,
     error: null,
     model: null,
@@ -149,6 +158,90 @@ await test('is idempotent -- a second call does not error', async () => {
   const dir = await makeRecording()
   assert.strictEqual((await deleteAudioIfVerified(dir)).deleted, true)
   assert.strictEqual((await deleteAudioIfVerified(dir)).deleted, false)
+})
+
+console.log('\nuser acceptance')
+
+const ISSUES: VerificationIssue[] = [
+  { code: 'low_confidence', severity: 'warning', message: 'low confidence' },
+  { code: 'suspicious_gap', severity: 'error', message: 'a gap' }
+]
+
+await test('deletes audio once the user has accepted the issues', async () => {
+  const dir = await makeRecording({ verification: 'accepted', issues: ISSUES })
+  const outcome = await deleteAudioOnAcceptance(dir)
+  assert.strictEqual(outcome.deleted, true, outcome.reason)
+  assert.strictEqual(await audioExists(dir), false)
+
+  const meta = JSON.parse(await fs.readFile(join(dir, 'metadata.json'), 'utf8')) as RecordingMeta
+  assert.strictEqual(meta.audioDeleted, true)
+  assert.strictEqual(meta.audioFile, null)
+  // The issues are a record of what was found and must survive the acceptance.
+  assert.strictEqual(meta.verification.issues.length, 2, 'issues were erased')
+  assert.strictEqual(meta.verification.status, 'accepted')
+})
+
+await test('acceptance does NOT waive the transcript requirement', async () => {
+  // The whole point of deleting audio is that the transcript replaces it. With
+  // no transcript there is nothing to keep, and no acceptance can authorise it.
+  const dir = await makeRecording({ verification: 'accepted', issues: ISSUES, transcript: null })
+  const outcome = await deleteAudioOnAcceptance(dir)
+  assert.strictEqual(outcome.deleted, false)
+  assert.strictEqual(await audioExists(dir), true)
+})
+
+await test('acceptance does NOT waive an empty transcript either', async () => {
+  const dir = await makeRecording({ verification: 'accepted', issues: ISSUES, transcript: '' })
+  const outcome = await deleteAudioOnAcceptance(dir)
+  assert.strictEqual(outcome.deleted, false)
+  assert.strictEqual(await audioExists(dir), true)
+})
+
+await test('KEEPS audio when the acceptance is not on disk', async () => {
+  // The caller cannot assert an acceptance; it is read back from metadata, so a
+  // recording still marked as having issues is refused however it was invoked.
+  const dir = await makeRecording({ status: 'needs_review', verification: 'issues', issues: ISSUES })
+  const outcome = await deleteAudioOnAcceptance(dir)
+  assert.strictEqual(outcome.deleted, false)
+  assert.strictEqual(await audioExists(dir), true)
+})
+
+await test('KEEPS audio when an accepted recording is not yet complete', async () => {
+  const dir = await makeRecording({
+    status: 'needs_review',
+    verification: 'accepted',
+    issues: ISSUES
+  })
+  const outcome = await deleteAudioOnAcceptance(dir)
+  assert.strictEqual(outcome.deleted, false)
+  assert.strictEqual(await audioExists(dir), true)
+})
+
+await test('the automatic path still refuses an accepted recording', async () => {
+  // Acceptance must not become a second way into the zero-issue path: only the
+  // user-initiated call may act on it.
+  const dir = await makeRecording({ verification: 'accepted', issues: ISSUES })
+  const outcome = await deleteAudioIfVerified(dir)
+  assert.strictEqual(outcome.deleted, false, 'accepted recording was auto-deleted')
+  assert.strictEqual(await audioExists(dir), true)
+})
+
+await test('acceptance keeps the engine output that explains the issues', async () => {
+  const dir = await makeRecording({ verification: 'accepted', issues: ISSUES })
+  await fs.writeFile(join(dir, 'whisper.json'), '{"segments":[]}', 'utf8')
+  await deleteAudioOnAcceptance(dir)
+  const kept = await fs
+    .access(join(dir, 'whisper.json'))
+    .then(() => true)
+    .catch(() => false)
+  assert.strictEqual(kept, true, 'raw output was dropped despite unresolved issues')
+})
+
+await test('accepting twice is idempotent', async () => {
+  const dir = await makeRecording({ verification: 'accepted', issues: ISSUES })
+  assert.strictEqual((await deleteAudioOnAcceptance(dir)).deleted, true)
+  assert.strictEqual((await deleteAudioOnAcceptance(dir)).deleted, false)
+  assert.strictEqual(await audioExists(dir), false)
 })
 
 console.log('\ncrash reconciliation')

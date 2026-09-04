@@ -8,10 +8,19 @@ import type {
 } from '@shared/types'
 import { startCapture, listInputDevices, MicrophoneError } from './audio/recorder'
 import type { AudioDevice, CaptureHandle } from './audio/recorder'
+import { decodeToPcm16, IMPORT_ACCEPT } from './audio/import'
 import { StatusBadge, StatusDot } from './components/StatusBadge'
 import { ModelGate } from './components/ModelGate'
 import { usePrompt } from './components/PromptDialog'
 import { formatDate, formatDuration } from './components/format'
+
+interface ImportProgress {
+  fileName: string
+  /** 1-based position within the batch, so a multi-file drop reads sensibly. */
+  index: number
+  total: number
+  stage: 'decoding' | 'saving'
+}
 
 const ACTIVE_STATES: RecordingMeta['transcriptionStatus'][] = [
   'queued',
@@ -39,6 +48,9 @@ export default function App(): JSX.Element {
   const [level, setLevel] = useState(0)
   const [recError, setRecError] = useState('')
 
+  const [importing, setImporting] = useState<ImportProgress | null>(null)
+  const [dropping, setDropping] = useState(false)
+
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchHit[]>([])
   const [toast, setToast] = useState('')
@@ -47,6 +59,10 @@ export default function App(): JSX.Element {
 
   const captureRef = useRef<CaptureHandle | null>(null)
   const recordingIdRef = useRef<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  // Guards against a second batch starting before the first render has
+  // disabled the controls, which two quick drops can otherwise manage.
+  const importingRef = useRef(false)
 
   const notify = useCallback((message: string) => {
     setToast(message)
@@ -228,6 +244,82 @@ export default function App(): JSX.Element {
       setIsPaused(true)
     }
   }
+
+  // ── Importing ────────────────────────────────────────────────────────────
+  /**
+   * Decode each file and stream it to the main process as PCM.
+   *
+   * Files are handled strictly one at a time. Decoding holds the whole file in
+   * memory, so two at once doubles the peak for no gain, and the importer owns a
+   * single session anyway. A failure part-way through cancels that file's
+   * recording rather than leaving a truncated one behind, then carries on with
+   * the rest of the batch.
+   */
+  const importFiles = useCallback(
+    async (files: File[]): Promise<void> => {
+      if (!activeProject || files.length === 0 || importingRef.current) return
+      importingRef.current = true
+      setRecError('')
+
+      let lastImportedId: string | null = null
+      let failed = 0
+
+      for (let index = 0; index < files.length; index++) {
+        const file = files[index]
+        const position = { fileName: file.name, index: index + 1, total: files.length }
+
+        try {
+          setImporting({ ...position, stage: 'decoding' })
+          const decoded = await decodeToPcm16(file)
+
+          setImporting({ ...position, stage: 'saving' })
+          await window.api.importer.begin(activeProject, file.name)
+          try {
+            for (const chunk of decoded.chunks) await window.api.importer.sendPcm(chunk)
+            const meta = await window.api.importer.finish()
+            lastImportedId = meta.id
+          } catch (err) {
+            // Half an import is worse than none: the WAV header would match its
+            // truncated payload, so it would transcribe as a short file with
+            // nothing to show the rest was missing.
+            await window.api.importer.cancel().catch(() => undefined)
+            throw err
+          }
+        } catch (err) {
+          failed++
+          notify(err instanceof Error ? err.message : `Could not import "${file.name}".`)
+        }
+      }
+
+      importingRef.current = false
+      setImporting(null)
+      await loadRecordings(activeProject)
+      await loadProjects()
+      if (lastImportedId) setSelectedId(lastImportedId)
+
+      const imported = files.length - failed
+      if (files.length > 1 && imported > 0) {
+        notify(`Imported ${imported} of ${files.length} files.`)
+      }
+    },
+    [activeProject, loadProjects, loadRecordings, notify]
+  )
+
+  /**
+   * Electron navigates the window to any file dropped on it, which unloads the
+   * app and looks exactly like a crash. Swallow every drop that misses the zone.
+   */
+  useEffect(() => {
+    const swallow = (event: DragEvent): void => event.preventDefault()
+    window.addEventListener('dragover', swallow)
+    window.addEventListener('drop', swallow)
+    return () => {
+      window.removeEventListener('dragover', swallow)
+      window.removeEventListener('drop', swallow)
+    }
+  }, [])
+
+  const canImport = Boolean(activeProject) && !importing && !isRecording
 
   // ── Search ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -430,7 +522,25 @@ export default function App(): JSX.Element {
           )}
         </div>
 
-        <div className="main-body">
+        <div
+          className={`main-body ${dropping ? 'dropping' : ''}`}
+          onDragOver={(event) => {
+            if (!canImport) return
+            event.preventDefault()
+            setDropping(true)
+          }}
+          onDragLeave={(event) => {
+            // Children raise dragleave as the pointer crosses them; only the
+            // container's own event means the file has actually left the zone.
+            if (event.currentTarget === event.target) setDropping(false)
+          }}
+          onDrop={(event) => {
+            event.preventDefault()
+            setDropping(false)
+            if (!canImport) return
+            void importFiles(Array.from(event.dataTransfer.files))
+          }}
+        >
           {modelStatus && <ModelGate status={modelStatus} onChange={setModelStatus} />}
 
           <div className="recorder">
@@ -443,13 +553,22 @@ export default function App(): JSX.Element {
 
             <div className="controls">
               {!isRecording ? (
-                <button
-                  className="primary"
-                  disabled={!activeProject}
-                  onClick={() => void startRecording()}
-                >
-                  ● Record
-                </button>
+                <>
+                  <button
+                    className="primary"
+                    disabled={!activeProject || Boolean(importing)}
+                    onClick={() => void startRecording()}
+                  >
+                    ● Record
+                  </button>
+                  <button
+                    disabled={!canImport}
+                    title="Transcribe an existing audio or video file"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    ↑ Import file
+                  </button>
+                </>
               ) : (
                 <>
                   <button onClick={() => void togglePause()}>
@@ -485,6 +604,29 @@ export default function App(): JSX.Element {
             )}
           </div>
 
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={IMPORT_ACCEPT}
+            multiple
+            style={{ display: 'none' }}
+            onChange={(event) => {
+              const files = Array.from(event.target.files ?? [])
+              // Cleared so picking the same file twice in a row still fires.
+              event.target.value = ''
+              void importFiles(files)
+            }}
+          />
+
+          {importing && (
+            <div className="notice info">
+              {importing.total > 1 && `(${importing.index} of ${importing.total}) `}
+              {importing.stage === 'decoding'
+                ? `Decoding "${importing.fileName}" — a long recording can take a minute…`
+                : `Saving audio from "${importing.fileName}"…`}
+            </div>
+          )}
+
           {recError && <div className="notice error">{recError}</div>}
 
           {detail ? (
@@ -509,6 +651,23 @@ export default function App(): JSX.Element {
                   notify('Re-queued for transcription')
                 }, 'Could not re-queue this recording.')
               }}
+              onAccept={async () => {
+                if (!activeProject) return
+                const count = detail.verification.issues.length
+                if (
+                  !window.confirm(
+                    `Accept this transcript and delete its audio?\n\n` +
+                      `The ${count} issue${count === 1 ? '' : 's'} found will stay on record, but the warning will clear and the original audio will be permanently deleted. This cannot be undone.`
+                  )
+                ) {
+                  return
+                }
+                await attempt(async () => {
+                  await window.api.transcription.accept(activeProject, detail.id)
+                  await loadRecordings(activeProject)
+                  notify('Transcript accepted, audio removed')
+                }, 'Could not accept this transcript.')
+              }}
               onReveal={() =>
                 attempt(
                   () => window.api.shell.reveal(detail.project, detail.id),
@@ -525,7 +684,7 @@ export default function App(): JSX.Element {
           ) : (
             <div className="empty">
               {activeProject
-                ? 'Press Record to capture a thought, then paste the transcript wherever you need it.'
+                ? 'Press Record to capture a thought, or drop an audio or video file here to transcribe one you already have.'
                 : 'Create a project to get started.'}
             </div>
           )}
@@ -552,6 +711,7 @@ function Detail({
   onRename,
   onDelete,
   onRetry,
+  onAccept,
   onReveal,
   onOpenInEditor
 }: {
@@ -566,6 +726,7 @@ function Detail({
   onRename: () => Promise<void>
   onDelete: () => Promise<void>
   onRetry: () => Promise<void>
+  onAccept: () => Promise<void>
   onReveal: () => Promise<void>
   onOpenInEditor: () => Promise<void>
 }): JSX.Element {
@@ -574,11 +735,17 @@ function Detail({
   const audioDeleted = meta?.audioDeleted ?? detail.audioDeleted
   const error = meta?.error ?? detail.error
   const working = ['queued', 'transcribing', 'verifying', 'saving', 'recording'].includes(status)
+  const accepted = verification.status === 'accepted'
+
+  // Recordings made before file import existed have no `source` at all, and
+  // every one of them came from the microphone.
+  const imported = detail.source === 'import'
 
   const metadataBlock = [
     `Title: ${detail.title}`,
     `Project: ${detail.project}`,
-    `Recorded: ${formatDate(detail.createdAt)}`,
+    `${imported ? 'Imported' : 'Recorded'}: ${formatDate(detail.createdAt)}`,
+    ...(imported && detail.sourceFile ? [`Source file: ${detail.sourceFile}`] : []),
     `Duration: ${formatDuration(detail.duration)}`,
     `Path: ${detail.transcriptPath ?? detail.dirPath}`,
     '',
@@ -592,9 +759,29 @@ function Detail({
         <StatusBadge status={status} progress={progress} />
       </div>
       <div className="detail-meta">
-        {formatDate(detail.createdAt)} · {formatDuration(detail.duration)}
-        {audioDeleted ? ' · audio removed after verification' : ' · audio retained'}
+        {imported ? 'Imported' : 'Recorded'} {formatDate(detail.createdAt)} ·{' '}
+        {formatDuration(detail.duration)}
+        {audioDeleted
+          ? accepted
+            ? ' · audio removed when you accepted it'
+            : ' · audio removed after verification'
+          : ' · audio retained'}
+        {imported && detail.sourceFile ? ` · from ${detail.sourceFile}` : ''}
       </div>
+
+      {accepted && verification.issues.length > 0 && (
+        <div className="notice">
+          <h4>
+            Accepted with {verification.issues.length} unresolved issue
+            {verification.issues.length === 1 ? '' : 's'}
+          </h4>
+          <ul>
+            {verification.issues.map((issue, index) => (
+              <li key={index}>{issue.message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {status === 'failed' && (
         <div className="notice error">
@@ -622,9 +809,21 @@ function Detail({
           </ul>
           <div style={{ marginTop: 8, color: 'var(--text-dim)' }}>
             The audio has been kept so you can retranscribe or listen back.
+            {imported && ' Your original file was never modified.'}
           </div>
           <div className="row">
             <button onClick={() => void onRetry()}>Retranscribe</button>
+            <button
+              onClick={() => void onAccept()}
+              title="Keep this transcript as it is and delete the audio it is holding"
+            >
+              Accept transcript
+            </button>
+          </div>
+          <div style={{ marginTop: 8, color: 'var(--text-faint)', fontSize: 12 }}>
+            Some issues never clear no matter how often you retranscribe — a long pause, a noisy
+            room, a quiet speaker. Accepting keeps the transcript, clears the warning and deletes
+            the audio.
           </div>
         </div>
       )}

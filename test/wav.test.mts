@@ -62,6 +62,22 @@ await test('duration tracks appended audio across many chunks', async () => {
   assert.ok(Math.abs(info.duration - 5) < 0.01, `file reported ${info.duration}`)
 })
 
+await test('overlapping appends do not overwrite each other', async () => {
+  // append() derives its write offset from a running byte count, so two appends
+  // in flight at once both read the same offset and the second lands on top of
+  // the first. PCM arrives as fire-and-forget IPC that never awaits the previous
+  // write, so this is the normal case rather than a rare one.
+  const path = await tmpFile()
+  const writer = await WavWriter.create(path)
+
+  await Promise.all(Array.from({ length: 20 }, () => writer.append(tone(0.5))))
+  await writer.close()
+
+  const info = await readWavInfo(path)
+  assert.ok(info, 'header did not parse')
+  assert.ok(Math.abs(info.duration - 10) < 0.01, `expected 10s, got ${info.duration}`)
+})
+
 await test('file is already valid mid-recording, before close', async () => {
   // Simulates the app being killed while recording: whatever has been flushed
   // must already be a readable WAV.

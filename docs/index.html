@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <title>Transcriber — local-first voice to text</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Record a thought, get text. Transcription runs entirely on your own machine. For macOS and Windows.">
+<meta name="description" content="Record a thought or import an audio or video file, get text. Transcription runs entirely on your own machine. For macOS and Windows.">
 <style>
   :root{
     --bg:#0f1116; --panel:#161a21; --raised:#1d222b; --border:#272d38;
@@ -70,6 +70,7 @@
      and anything else you type into. Transcription runs on your own machine.</p>
   <div class="pills">
     <span class="pill">Runs offline</span>
+    <span class="pill">Imports audio &amp; video</span>
     <span class="pill">No account</span>
     <span class="pill">Plain text files</span>
     <span class="pill">MIT licensed</span>
@@ -125,7 +126,7 @@
   <h2>How it works</h2>
   <ol>
     <li>Pick or create a project.</li>
-    <li>Press Record and talk.</li>
+    <li>Press Record and talk &mdash; or drop in a file you already have.</li>
     <li>Press Stop. Transcription starts on its own, in the background.</li>
     <li>The transcript appears. Copy it, or hand its file path to your coding agent.</li>
   </ol>
@@ -136,6 +137,20 @@
     metadata.json</code></pre>
   <p>Which means you can just say:</p>
   <pre><code>Read: ~/Transcriber/Projects/Zeric/Recording 014/transcript.txt</code></pre>
+</section>
+
+<section class="wrap">
+  <h2>Transcribing a file you already have</h2>
+  <p>Press <strong>Import file</strong>, or drag files onto the window, to transcribe a lecture
+     recording, a meeting export or a voice memo. Several at once is fine.</p>
+  <p><code>.mp4</code>, <code>.mov</code>, <code>.webm</code>, <code>.m4a</code>,
+     <code>.mp3</code>, <code>.wav</code>, <code>.aac</code>, <code>.flac</code>,
+     <code>.ogg</code> and <code>.opus</code> all work, with nothing extra to install &mdash;
+     no ffmpeg, no command line.</p>
+  <p>The file is decoded and saved as a normal recording, then transcribed and checked exactly
+     like something captured from the microphone. <strong>Your original file is never opened for
+     writing, moved or deleted</strong> &mdash; the app is handed its contents and its name, never
+     its location.</p>
 </section>
 
 <section class="wrap">
@@ -163,6 +178,11 @@
   <p>Audio is never deleted on an error path, and never before a transcript exists on
      disk. If the app is interrupted mid-recording, the partial audio is repaired and
      transcribed on the next launch rather than lost.</p>
+  <p>Some issues never clear however often you retranscribe &mdash; a genuinely long pause, a
+     noisy room, a quiet speaker. <strong>Accept transcript</strong> signs off on them: the
+     warning clears and the audio it was holding is released. The issues stay on record rather
+     than being erased, so an accepted transcript is never mistaken for one that passed cleanly,
+     and a recording with nothing transcribed refuses to be accepted at all.</p>
 </section>
 
 <section class="wrap">

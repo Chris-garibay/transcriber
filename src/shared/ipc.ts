@@ -23,8 +23,15 @@ export const IPC = {
   recordCancel: 'recording:cancel',
   recordState: 'recording:state',
 
+  // File import
+  importBegin: 'import:begin',
+  importPcm: 'import:pcm',
+  importFinish: 'import:finish',
+  importCancel: 'import:cancel',
+
   // Transcription
   transcriptionRetry: 'transcription:retry',
+  transcriptionAccept: 'transcription:accept',
   transcriptionUpdate: 'transcription:update',
 
   // Model management

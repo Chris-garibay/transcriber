@@ -1,4 +1,5 @@
 import { SAMPLE_RATE } from '@shared/ipc'
+import { floatToPcm16 } from './pcm'
 
 export type MicErrorKind = 'denied' | 'not-found' | 'in-use' | 'unsupported' | 'unknown'
 
@@ -54,16 +55,6 @@ class PcmTap extends AudioWorkletProcessor {
 }
 registerProcessor('pcm-tap', PcmTap)
 `
-
-/** Convert Float32 [-1,1] samples to little-endian Int16, clamping on the way. */
-function floatToPcm16(input: Float32Array): ArrayBuffer {
-  const out = new Int16Array(input.length)
-  for (let i = 0; i < input.length; i++) {
-    const clamped = Math.max(-1, Math.min(1, input[i]))
-    out[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff
-  }
-  return out.buffer
-}
 
 export interface CaptureHandle {
   stop: () => Promise<void>

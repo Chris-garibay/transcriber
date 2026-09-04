@@ -42,6 +42,22 @@ export function safeName(input: string): string {
   return cleaned
 }
 
+/**
+ * Derive a recording title from an imported file's name: drop the extension and
+ * relax underscores into spaces, so "CS229_lecture-04.mp4" reads as
+ * "CS229 lecture-04" in the sidebar.
+ *
+ * Callers pass `File.name`, which is already a base name, but the leading
+ * segment split and `safeName` are kept so that a full path arriving here could
+ * never become a directory outside the data root.
+ */
+export function titleFromFileName(fileName: string): string {
+  const base = fileName.split(/[/\\]/).pop() ?? fileName
+  const withoutExtension = base.replace(/\.[A-Za-z0-9]{1,5}$/, '')
+  const relaxed = withoutExtension.replace(/_+/g, ' ').replace(/\s+/g, ' ').trim()
+  return safeName(relaxed || base)
+}
+
 /** True when `child` is genuinely inside `parent`. Used as a deletion guard. */
 export function isInside(parent: string, child: string): boolean {
   const p = parent.endsWith(sep) ? parent : parent + sep

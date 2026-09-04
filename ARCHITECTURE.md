@@ -20,6 +20,25 @@ access; everything crosses through the preload bridge, which exposes one frozen 
 take down the main process while audio was still only on disk. A child process gives crash
 isolation, free cancellation, and identical behaviour on macOS and Windows.
 
+**File import decodes in the renderer.** Importing an mp4 or mp3 is the one place the app has
+to deal with a compressed format, and the obvious answer -- bundle ffmpeg -- would add ~80 MB
+per platform to a binary that is already fighting code signing. Electron ships the same
+demuxers Chrome does, so `decodeAudioData` handles every format worth supporting with nothing
+to install.
+
+`decodeAudioData` resamples its result to the sample rate of the context it is called on, so
+the decode runs through a 16 kHz `OfflineAudioContext` and never materialises the file at its
+native rate: a one-hour 48 kHz stereo lecture is 1.4 GB of Float32 decoded natively and 230 MB
+decoded at 16 kHz. That behaviour is a property of the call rather than something it can be
+asked for, so `import.ts` checks the result and conforms it through a render pass if it ever
+comes back otherwise.
+
+The decoded PCM is streamed to main over IPC in ~30 s chunks and written by the same
+`WavWriter` the microphone uses, so the queue, verification and cleanup all run unchanged. The
+main process is never told where the source file lives -- only its base name, for the title --
+which is what makes it structurally impossible for the cleanup step to reach the user's
+original file.
+
 **Raw PCM capture, not MediaRecorder.** The renderer opens `AudioContext({ sampleRate: 16000 })`
 and taps it with an AudioWorklet, converting Float32 to Int16 and streaming to main at ~32 KB/s.
 This is exactly what whisper.cpp wants, so there is no ffmpeg dependency, no lossy Opus
@@ -34,6 +53,19 @@ free and the queue can never disagree with the recordings.
 
 ## Durability
 
+`WavWriter` serialises every operation against its file handle. `append` derives its write
+offset from a running byte count, so two appends in flight at once both read the same offset and
+the second lands on top of the first. Overlap is the normal case rather than a rare one:
+microphone PCM arrives as fire-and-forget IPC that never awaits the previous write, and an
+import streams its chunks back to back. `test/wav.test.mts` asserts that twenty overlapping
+appends produce twenty chunks of audio.
+
+Recording directories are claimed by creating them, not by scanning and then creating. With two
+capture paths a check-then-act allocation is reachable: a recording and an import starting
+together both see the same highest id and are handed the same directory, so one overwrites the
+other's audio. `mkdir` without `recursive` fails on an existing directory, which makes the
+create itself the claim.
+
 `WavWriter` appends audio and rewrites the header's length fields roughly every two seconds,
 so a hard crash costs at most that much audio and leaves a valid WAV on disk. `repairWav()`
 recomputes the header from the true file size for anything written after the last flush.
@@ -44,12 +76,31 @@ new one, never a truncated one.
 
 ## The deletion guard
 
-`src/main/cleanup/audio-cleanup.ts` is the only module in the codebase that unlinks audio. It
-re-reads every precondition from disk rather than trusting the caller:
+`src/main/cleanup/audio-cleanup.ts` is the only module in the codebase that unlinks audio. There
+are two ways in and they share one `unlinkAudio` helper, so they cannot drift apart: automatic
+deletion after a clean verification, and deletion after the user explicitly accepts a flagged
+transcript. Both re-read every precondition from disk rather than trusting the caller.
+
+`deleteAudioIfVerified` requires:
 
 - verification status is `passed` **and** the issue list is empty
 - transcription status is `complete`
 - the transcript file independently exists on disk and is non-empty
+
+`deleteAudioOnAcceptance` waives exactly one of those -- that the report be clean -- and nothing
+else. It requires `verification.status === 'accepted'`, read back from metadata rather than
+asserted by the caller, so a stale in-memory object cannot authorise a deletion. It specifically
+cannot waive the transcript precondition: once the audio is gone the transcript is all that is
+left, so deleting audio to keep nothing would be the exact loss this module exists to prevent.
+`queue.accept()` refuses upfront when the transcript is empty rather than leaving a recording
+marked complete with its audio still held.
+
+Acceptance is recorded, not erased. The issues stay in metadata as the factual record of what the
+checker found, `verification.status` becomes `accepted` rather than `passed`, and `acceptedAt` is
+stamped. That keeps an accepted transcript distinguishable from a clean pass, and means the
+automatic path -- which requires `passed` -- still refuses it, so acceptance cannot become a
+second, quieter route into zero-issue deletion. `whisper.json` is kept too, since the issues it
+explains are still on record.
 
 Write ordering is: persist the verdict with `audioDeleted: false` and fsync, unlink the audio,
 then persist `audioDeleted: true`. A crash before the unlink leaves audio present and metadata
@@ -66,6 +117,12 @@ On startup, any recording left in `recording` or `saving` state has its WAV head
 rebuilt by `repairWav()` before it is queued, recovering the audio written after the
 last flush. Without that step a crash silently truncates the transcript at the last
 flush boundary.
+
+An interrupted **import** is the exception: it is failed rather than queued. Its header already
+matches its truncated payload, so every verification check would pass and the user would get a
+clean transcript covering only the part that had been decoded, with nothing to indicate the
+rest was missing. The source file is untouched, so importing again costs nothing -- which makes
+failing loudly strictly better than transcribing what landed.
 
 ## Verification
 
@@ -109,6 +166,31 @@ assuming a live window.
 The single-instance lock is taken only in packaged builds. In development a stale
 instance would otherwise absorb every relaunch and silently present the previous
 build.
+
+## Import limits
+
+`decodeAudioData` needs the whole container in one ArrayBuffer, so the ceiling on an importable
+file is V8's maximum ArrayBuffer length: exactly `2**31 - 2**21`, or 2 GiB - 2 MiB.
+
+That number is a V8 build constant rather than anything about the machine. Measured on an 8 GB
+M2, it is byte-identical across repeated runs and unchanged with a gigabyte already committed
+and touched, so there is nothing to compute per computer -- a workstation with 128 GB is capped
+at the same 2,145,386,496 bytes. It moves only when the bundled Chromium does, which is why
+`import.ts` writes it as that expression rather than a rounded-down guess.
+
+The size is checked up front because the platform's own errors misattribute the cause: a 3.2 GB
+blob read rejects in 12 ms with `NotReadableError` worded as a permissions problem, and a file
+just under the cap throws `RangeError: Array buffer allocation failed`. Neither identifies the
+real reason, so both are also caught and reported as the size, since allocation can fail below
+the cap when memory is tight.
+
+Decoding is single-file-at-a-time: two at once doubles peak memory for no throughput gain, and
+the importer owns one session regardless.
+
+Lifting the cap means not using `decodeAudioData`. WAV is raw PCM and could be sliced at frame
+boundaries with no dependency; mp4 and m4a would need a JS demuxer feeding WebCodecs. Neither is
+implemented -- compressed audio does not come close to the ceiling (a 128 kbps `.m4a` would need
+35 hours), so only long video and uncompressed WAV reach it.
 
 ## Platform differences
 

@@ -1,9 +1,8 @@
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import type { RecordingMeta, RecordingState } from '@shared/types'
-import { recordingDir } from '../storage/paths'
-import { AUDIO_FILE, writeMeta, readMeta } from '../storage/metadata'
-import { nextRecordingId, newMeta } from '../storage/recordings'
+import { AUDIO_FILE, newMeta, writeMeta, readMeta } from '../storage/metadata'
+import { claimRecording } from '../storage/recordings'
 import { WavWriter } from '../audio/wav-writer'
 
 interface ActiveSession {
@@ -43,9 +42,9 @@ class Recorder {
   async start(project: string): Promise<RecordingMeta> {
     if (this.session) throw new Error('A recording is already in progress.')
 
-    const id = await nextRecordingId(project)
-    const dir = recordingDir(project, id)
-    await fs.mkdir(dir, { recursive: true })
+    // Claiming creates the directory exclusively, so a file import starting at
+    // the same moment cannot be handed the same one.
+    const { id, dir } = await claimRecording(project)
 
     const meta = newMeta(project, id)
     // Metadata is written before the first sample so that a crash one second

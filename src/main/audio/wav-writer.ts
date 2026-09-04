@@ -42,6 +42,7 @@ export class WavWriter {
   private dataBytes = 0
   private sinceFlush = 0
   private closed = false
+  private tail: Promise<unknown> = Promise.resolve()
 
   private constructor(
     handle: FileHandle,
@@ -66,8 +67,46 @@ export class WavWriter {
     return this.dataBytes
   }
 
+  /**
+   * Serialise every operation against the shared file handle.
+   *
+   * `appendNow` derives its write offset from `dataBytes`, so two appends that
+   * overlap both read the same offset and the second silently overwrites the
+   * first. Overlap is the normal case rather than a rare one: microphone PCM
+   * arrives as fire-and-forget IPC that never awaits the previous write, and a
+   * file import streams its chunks back to back. Chaining is enough here
+   * because there is exactly one writer per file.
+   */
+  private run<T>(task: () => Promise<T>): Promise<T> {
+    const next = this.tail.then(task)
+    // Absorb failures into the chain so one bad write cannot wedge the rest of
+    // the recording, while still rejecting the caller that caused it.
+    this.tail = next.catch(() => undefined)
+    return next
+  }
+
   /** Append interleaved little-endian Int16 samples. */
-  async append(chunk: Buffer): Promise<void> {
+  append(chunk: Buffer): Promise<void> {
+    return this.run(() => this.appendNow(chunk))
+  }
+
+  /** Rewrite the header for the current length and force it to disk. */
+  flush(): Promise<void> {
+    return this.run(() => this.flushNow())
+  }
+
+  async close(): Promise<number> {
+    return this.run(async () => {
+      if (this.closed || !this.handle) return this.dataBytes
+      await this.flushNow()
+      await this.handle.close()
+      this.handle = null
+      this.closed = true
+      return this.dataBytes
+    })
+  }
+
+  private async appendNow(chunk: Buffer): Promise<void> {
     if (this.closed || !this.handle) return
     if (chunk.length === 0) return
 
@@ -75,27 +114,19 @@ export class WavWriter {
     this.dataBytes += chunk.length
     this.sinceFlush += chunk.length
 
-    // Roughly every 2 seconds of audio, make what we have on disk valid.
+    // Roughly every 2 seconds of audio, make what we have on disk valid. This
+    // calls the unserialised form deliberately: it is already inside the chain,
+    // and going through flush() would wait on a link that cannot complete.
     if (this.sinceFlush >= SAMPLE_RATE * BYTES_PER_SAMPLE * 2) {
-      await this.flush()
+      await this.flushNow()
     }
   }
 
-  /** Rewrite the header for the current length and force it to disk. */
-  async flush(): Promise<void> {
+  private async flushNow(): Promise<void> {
     if (this.closed || !this.handle) return
     await this.handle.write(wavHeader(this.dataBytes), 0, HEADER_BYTES, 0)
     await this.handle.sync()
     this.sinceFlush = 0
-  }
-
-  async close(): Promise<number> {
-    if (this.closed || !this.handle) return this.dataBytes
-    await this.flush()
-    await this.handle.close()
-    this.handle = null
-    this.closed = true
-    return this.dataBytes
   }
 }
 

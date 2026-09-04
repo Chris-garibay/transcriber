@@ -55,8 +55,20 @@ const api = {
     onState: (handler: (state: RecordingState) => void) =>
       subscribe<RecordingState>(IPC.recordState, handler)
   },
+  importer: {
+    begin: (project: string, fileName: string) =>
+      call<RecordingMeta>(IPC.importBegin, project, fileName),
+    // Awaited, so the renderer only sends the next chunk once this one is on
+    // disk and a write failure surfaces where it can still be acted on.
+    sendPcm: (chunk: ArrayBuffer) => call<void>(IPC.importPcm, chunk),
+    finish: () => call<RecordingMeta>(IPC.importFinish),
+    cancel: () => call<void>(IPC.importCancel)
+  },
   transcription: {
     retry: (project: string, id: string) => call<void>(IPC.transcriptionRetry, project, id),
+    // Accept the checker's issues and release the hold they place on the audio.
+    accept: (project: string, id: string) =>
+      call<RecordingMeta | null>(IPC.transcriptionAccept, project, id),
     onUpdate: (handler: (update: TranscriptionUpdate) => void) =>
       subscribe<TranscriptionUpdate>(IPC.transcriptionUpdate, handler)
   },

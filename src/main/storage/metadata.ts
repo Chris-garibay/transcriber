@@ -12,6 +12,31 @@ export function emptyVerification(): VerificationResult {
 }
 
 /**
+ * A freshly created recording, before any audio exists. Lives here rather than
+ * in recordings.ts so that both capture paths -- microphone and file import --
+ * can build one without pulling in the Electron-dependent path helpers.
+ */
+export function newMeta(project: string, id: string): RecordingMeta {
+  return {
+    id,
+    title: id,
+    project,
+    createdAt: new Date().toISOString(),
+    duration: 0,
+    audioFile: AUDIO_FILE,
+    transcriptFile: null,
+    transcriptionStatus: 'recording',
+    verification: emptyVerification(),
+    audioDeleted: false,
+    source: 'microphone',
+    sourceFile: null,
+    error: null,
+    model: null,
+    schema: 1
+  }
+}
+
+/**
  * Write JSON durably: serialise to a sibling temp file, fsync it, then rename.
  * Rename is atomic within a directory on both APFS and NTFS, so a crash leaves
  * either the old file or the new one -- never a truncated one. The audio

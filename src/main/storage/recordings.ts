@@ -6,47 +6,19 @@ import {
   AUDIO_FILE,
   METADATA_FILE,
   TRANSCRIPT_FILE,
-  emptyVerification,
   fileExists,
+  newMeta,
   readMeta,
   writeMeta
 } from './metadata'
+import { claimRecordingDir } from './claim'
+import type { ClaimedRecording } from './claim'
 
-/** Sequential, human-friendly directory name: "Recording 007". */
-export async function nextRecordingId(project: string): Promise<string> {
-  const dir = projectDir(project)
-  await fs.mkdir(dir, { recursive: true })
+export { newMeta }
 
-  let highest = 0
-  try {
-    const entries = await fs.readdir(dir, { withFileTypes: true })
-    for (const entry of entries) {
-      const match = /^Recording (\d+)$/.exec(entry.name)
-      if (entry.isDirectory() && match) highest = Math.max(highest, parseInt(match[1], 10))
-    }
-  } catch {
-    /* directory is new */
-  }
-
-  return `Recording ${String(highest + 1).padStart(3, '0')}`
-}
-
-export function newMeta(project: string, id: string): RecordingMeta {
-  return {
-    id,
-    title: id,
-    project,
-    createdAt: new Date().toISOString(),
-    duration: 0,
-    audioFile: AUDIO_FILE,
-    transcriptFile: null,
-    transcriptionStatus: 'recording',
-    verification: emptyVerification(),
-    audioDeleted: false,
-    error: null,
-    model: null,
-    schema: 1
-  }
+/** Create and claim the next recording directory inside a project. */
+export function claimRecording(project: string): Promise<ClaimedRecording> {
+  return claimRecordingDir(projectDir(project))
 }
 
 export async function listRecordings(project: string): Promise<RecordingMeta[]> {

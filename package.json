@@ -1,7 +1,7 @@
 {
   "name": "transcriber",
-  "version": "0.1.3",
-  "description": "Local-first voice recorder and transcriber for use alongside AI coding tools",
+  "version": "0.2.0",
+  "description": "Local-first voice recorder and file transcriber for use alongside AI coding tools",
   "main": "./out/main/index.js",
   "author": "Chris Garibay",
   "license": "MIT",
@@ -14,7 +14,7 @@
     "fetch:whisper": "node scripts/fetch-whisper.mjs",
     "package:mac": "npm run build && electron-builder --mac",
     "package:win": "npm run build && electron-builder --win",
-    "test": "tsx --tsconfig tsconfig.node.json test/wav.test.mts && tsx --tsconfig tsconfig.node.json test/run-cli.test.mts && tsx --tsconfig tsconfig.node.json test/names.test.mts && tsx --tsconfig tsconfig.node.json test/cleanup.test.mts && tsx --tsconfig tsconfig.node.json test/verify.test.mts"
+    "test": "tsx --tsconfig tsconfig.node.json test/wav.test.mts && tsx --tsconfig tsconfig.node.json test/run-cli.test.mts && tsx --tsconfig tsconfig.node.json test/names.test.mts && tsx --tsconfig tsconfig.node.json test/cleanup.test.mts && tsx --tsconfig tsconfig.node.json test/verify.test.mts && tsx --tsconfig tsconfig.node.json test/import.test.mts"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",

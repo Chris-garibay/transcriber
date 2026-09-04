@@ -14,7 +14,18 @@ export type TranscriptionStatus =
   | 'needs_review'// transcript exists but verification found issues; audio kept
   | 'failed'      // transcription could not produce a transcript; audio kept
 
-export type VerificationStatus = 'pending' | 'passed' | 'issues' | 'error'
+export type VerificationStatus =
+  | 'pending'
+  | 'passed'
+  | 'issues'
+  | 'error'
+  /**
+   * The checker found issues and the user reviewed them and signed off. Kept
+   * distinct from 'passed' so an accepted transcript can never be mistaken for
+   * one that verified cleanly, and so the automatic deletion path -- which
+   * requires 'passed' -- still refuses it.
+   */
+  | 'accepted'
 
 /** A single problem found during verification. Presence of ANY issue keeps the audio. */
 export interface VerificationIssue {
@@ -40,6 +51,8 @@ export interface VerificationResult {
   status: VerificationStatus
   issues: VerificationIssue[]
   checkedAt: string | null
+  /** When the user accepted the issues below, if they did. */
+  acceptedAt?: string | null
   /** Diagnostics surfaced in the UI; never used to gate deletion on its own. */
   stats?: {
     durationSec: number
@@ -65,6 +78,17 @@ export interface RecordingMeta {
   transcriptionStatus: TranscriptionStatus
   verification: VerificationResult
   audioDeleted: boolean
+  /**
+   * Where the audio came from. Absent on recordings made before file import
+   * existed, all of which are microphone captures.
+   */
+  source?: 'microphone' | 'import'
+  /**
+   * Base name of the imported file, kept for display. Never a path: the main
+   * process is only ever told the name, so the user's original file stays
+   * outside anything this app can reach.
+   */
+  sourceFile?: string | null
   /** Populated when transcription fails, for display and retry context. */
   error?: string | null
   model?: string | null
